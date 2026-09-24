@@ -1,0 +1,8 @@
+version: 2.0.0
+files:
+  - url: pazak-vpn-installer-2.0.0.exe
+    sha512: Y0lo4/jcbJvcIVWcWCtJVJQbGVRezUfLLBLZ3zk7vdTktFySwcQnqF9ZFIaP990S5hgU1A5tdU+cjp5Wz8a9RA==
+    size: 104230295
+path: pazak-vpn-installer-2.0.0.exe
+sha512: Y0lo4/jcbJvcIVWcWCtJVJQbGVRezUfLLBLZ3zk7vdTktFySwcQnqF9ZFIaP990S5hgU1A5tdU+cjp5Wz8a9RA==
+releaseDate: '2026-09-10T01:01:24.386Z'

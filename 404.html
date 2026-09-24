@@ -1,0 +1,250 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<meta name="theme-color" content="#060913">
+<title>Pazak VPN 2.0</title>
+<!--
+  Экран обязательного обновления 1.5.x → 2.0 (24.09.2026).
+  Старые приложения зашиты на https://pazak.ru, старый сервер заблокирован — pazak.ru отдаёт эту страницу.
+  Внутри приложения управляет родным автообновлятором через мост window.pazak:
+    Windows: состояния none/available/downloading(percent)/ready/error, установка — restartToUpdate()
+    Android: состояния none/downloading(pct)/ready/error, установка — restartToUpdate() → системный установщик
+  Сами апдейтеры читают /app/latest.yml и /app/android/latest.json с этого же хоста.
+-->
+<style>
+@font-face { font-family: "Tinkoff Sans"; src: url("/TinkoffSans.woff2") format("woff2"); font-display: swap; }
+:root {
+  --void: #060913;
+  --deep: #0d1330;
+  --star: #eef2ff;
+  --dust: #8b94bd;
+  --ion: #8a7cff;
+  --flare: #5ee6ff;
+  --danger: #ff7a8a;
+  --ring: 0;              /* 0…1 — доля скачанного */
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; min-height: 100%; }
+body {
+  min-height: 100vh; min-height: 100dvh;
+  display: flex; align-items: center; justify-content: center;
+  padding: 32px 16px calc(32px + env(safe-area-inset-bottom));
+  color: var(--star);
+  font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  background:
+    radial-gradient(1.2px 1.2px at 12% 18%, rgba(238,242,255,.8), transparent 60%),
+    radial-gradient(1px 1px at 78% 12%, rgba(238,242,255,.6), transparent 60%),
+    radial-gradient(1.4px 1.4px at 88% 64%, rgba(238,242,255,.7), transparent 60%),
+    radial-gradient(1px 1px at 22% 82%, rgba(238,242,255,.5), transparent 60%),
+    radial-gradient(1px 1px at 55% 92%, rgba(238,242,255,.45), transparent 60%),
+    radial-gradient(1.2px 1.2px at 40% 8%, rgba(238,242,255,.55), transparent 60%),
+    radial-gradient(1px 1px at 6% 56%, rgba(238,242,255,.5), transparent 60%),
+    radial-gradient(900px 600px at 50% 38%, rgba(138,124,255,.16), transparent 70%),
+    linear-gradient(180deg, var(--deep), var(--void) 70%);
+  background-attachment: fixed;
+  -webkit-font-smoothing: antialiased;
+}
+main { width: 100%; max-width: 420px; text-align: center; }
+
+/* ── подпись страницы: орбита вокруг логотипа = прогресс загрузки ── */
+.orbit { position: relative; width: 184px; height: 184px; margin: 0 auto 28px; }
+.orbit svg { position: absolute; inset: 0; width: 100%; height: 100%; transform: rotate(-90deg); overflow: visible; }
+.orbit .track { fill: none; stroke: rgba(139,148,189,.18); stroke-width: 2; }
+.orbit .arc {
+  fill: none; stroke: var(--ion); stroke-width: 3; stroke-linecap: round;
+  stroke-dasharray: 534; stroke-dashoffset: calc(534 * (1 - var(--ring)));
+  transition: stroke-dashoffset .6s ease, stroke .4s ease;
+  filter: drop-shadow(0 0 6px rgba(138,124,255,.6));
+}
+.orbit img {
+  position: absolute; left: 50%; top: 50%; width: 112px; height: 112px;
+  transform: translate(-50%, -50%); border-radius: 50%;
+  box-shadow: 0 0 0 1px rgba(238,242,255,.08), 0 12px 40px rgba(0,0,0,.45);
+}
+/* поиск обновления: неопределённая дуга крутится по орбите */
+.is-checking .orbit svg { animation: spin 1.6s linear infinite; }
+.is-checking .orbit .arc { stroke-dashoffset: 400; }
+.is-ready .orbit .arc, .is-installing .orbit .arc { stroke: var(--flare); filter: drop-shadow(0 0 10px rgba(94,230,255,.75)); }
+.is-error .orbit .arc { stroke: var(--danger); stroke-dashoffset: 0; opacity: .55; filter: none; }
+@keyframes spin { to { transform: rotate(270deg); } }
+
+.eyebrow { margin: 0 0 8px; color: var(--dust); font-size: 13px; letter-spacing: .14em; text-transform: uppercase; }
+h1 {
+  margin: 0 0 12px; font-family: "Tinkoff Sans", system-ui, sans-serif; font-weight: 700;
+  font-size: clamp(28px, 7.4vw, 36px); line-height: 1.1; letter-spacing: -.015em;
+}
+.lead { margin: 0 auto 28px; max-width: 34ch; color: var(--dust); }
+.status { min-height: 24px; margin: 0 0 16px; font-weight: 600; }
+.status .num { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-variant-numeric: tabular-nums; color: var(--flare); }
+.is-error .status { color: var(--danger); }
+
+.btn {
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  width: 100%; min-height: 54px; padding: 0 20px; border: 0; border-radius: 16px;
+  font: 600 17px/1 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; text-decoration: none;
+  color: #0a0e22; background: linear-gradient(180deg, #a79cff, var(--ion));
+  box-shadow: 0 10px 30px rgba(138,124,255,.35); cursor: pointer;
+  transition: transform .12s ease, opacity .2s ease;
+}
+.btn:active { transform: scale(.985); }
+.btn:disabled { cursor: default; opacity: .45; box-shadow: none; }
+.btn.ghost { color: var(--star); background: rgba(238,242,255,.06); box-shadow: inset 0 0 0 1px rgba(238,242,255,.14); }
+.btn + .btn { margin-top: 10px; }
+.btn:focus-visible, .link:focus-visible { outline: 2px solid var(--flare); outline-offset: 3px; }
+.hint { margin: 14px 0 0; color: var(--dust); font-size: 14px; }
+.link { color: var(--star); font-size: 14px; background: none; border: 0; padding: 4px; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; font-family: inherit; }
+.foot { margin-top: 22px; }
+[hidden] { display: none !important; }
+@media (prefers-reduced-motion: reduce) {
+  .is-checking .orbit svg { animation: none; }
+  .orbit .arc, .btn { transition: none; }
+}
+</style>
+</head>
+<body class="is-checking">
+<main>
+  <div class="orbit" aria-hidden="true">
+    <svg viewBox="0 0 184 184"><circle class="track" cx="92" cy="92" r="85"/><circle class="arc" cx="92" cy="92" r="85"/></svg>
+    <img src="/logo.png" alt="">
+  </div>
+
+  <p class="eyebrow">Pazak VPN</p>
+  <h1 id="title">Нужно обновление до&nbsp;2.0</h1>
+  <p class="lead" id="lead">Эта версия больше не подключается. Новая скачается сама — после установки войдите тем же логином и паролем.</p>
+
+  <p class="status" id="status" role="status" aria-live="polite">Ищем обновление…</p>
+
+  <!-- внутри приложения -->
+  <div id="appBox">
+    <button class="btn" id="action" type="button" disabled>Скачивается…</button>
+    <p class="hint" id="hint" hidden></p>
+    <div class="foot"><button class="link" id="manual" type="button">Скачать установщик вручную</button></div>
+  </div>
+
+  <!-- в браузере -->
+  <div id="webBox" hidden>
+    <a class="btn" id="dlFirst" href="/app/pazak-vpn-installer-2.0.0.exe">Скачать для Windows</a>
+    <a class="btn ghost" id="dlSecond" href="/app/android/pazak-vpn-installer-2.0.0-260910.apk">Скачать для Android</a>
+    <p class="hint">Установите поверх старой версии и войдите тем же логином и паролем.</p>
+  </div>
+</main>
+
+<script>
+(function () {
+  var FILES = {
+    windows: "/app/pazak-vpn-installer-2.0.0.exe",
+    android: "/app/android/pazak-vpn-installer-2.0.0-260910.apk"
+  };
+  var P = window.pazak;
+  var isApp = !!(P && P.isApp && typeof P.checkUpdate === "function");
+  var ua = navigator.userAgent || "";
+  var plat = (P && P.platform) || (/Android/i.test(ua) ? "android" : "windows");
+
+  var $ = function (id) { return document.getElementById(id); };
+  var body = document.body, status = $("status"), action = $("action"), hint = $("hint");
+
+  function mode(name) {
+    body.className = "is-" + name;
+  }
+  function ring(frac) { document.documentElement.style.setProperty("--ring", String(Math.max(0, Math.min(1, frac)))); }
+  function abs(path) { return location.origin + path; }
+
+  // ── в браузере: просто две ссылки, своя платформа первой ──
+  if (!isApp) {
+    $("appBox").hidden = true; $("webBox").hidden = false;
+    $("title").textContent = "Pazak VPN 2.0";
+    $("lead").textContent = "Новая версия приложения. Старая больше не подключается.";
+    status.hidden = true;
+    mode("ready"); ring(1);
+    if (/Android/i.test(ua)) {
+      var a = $("dlFirst"), b = $("dlSecond");
+      a.textContent = "Скачать для Android"; a.href = FILES.android;
+      b.textContent = "Скачать для Windows"; b.href = FILES.windows;
+    }
+    return;
+  }
+
+  // ── внутри старого приложения: ведём его родной автообновлятор ──
+  var installing = false, lastState = "", startedAt = Date.now(), ignoreErrUntil = 0;
+
+  function manualDownload() {
+    var url = abs(FILES[plat] || FILES.windows);
+    if (P.openExternal) { try { P.openExternal(url); return; } catch (e) {} }
+    location.href = url;   // Windows: Electron сам скачает файл, окно останется на месте
+  }
+  $("manual").addEventListener("click", manualDownload);
+
+  function retry() {
+    startedAt = Date.now(); installing = false; ignoreErrUntil = Date.now() + 4000;   // старый error ещё может прийти до новой проверки
+    mode("checking"); status.textContent = "Ищем обновление…";
+    action.disabled = true; action.textContent = "Скачивается…"; action.onclick = null;
+    try { P.checkUpdate(); } catch (e) {}
+  }
+
+  function install() {
+    installing = true;
+    mode("installing");
+    status.textContent = "Устанавливаем…";
+    action.disabled = true; action.textContent = "Устанавливаем…";
+    if (plat === "android") {
+      hint.hidden = false;
+      hint.textContent = "Если телефон попросит разрешение — разрешите установку для Pazak VPN, вернитесь сюда и нажмите «Установить» ещё раз.";
+      // системный установщик открывается поверх; кнопку возвращаем, чтобы можно было повторить после разрешения
+      setTimeout(function () { installing = false; show({ state: "ready" }); }, 4000);
+    } else {
+      hint.hidden = false;
+      hint.textContent = "Приложение закроется и запустится уже новой версией.";
+    }
+    try { var r = P.restartToUpdate(); if (r && r.then) r.then(function (x) { if (x && x.ok === false) fail(x.error); }); } catch (e) { fail(e && e.message); }
+  }
+
+  function fail(msg) {
+    installing = false;
+    mode("error"); ring(1);
+    status.textContent = "Не удалось скачать обновление";
+    hint.hidden = false;
+    hint.textContent = msg ? "Причина: " + String(msg).slice(0, 140) : "Проверьте интернет и попробуйте ещё раз.";
+    action.disabled = false; action.textContent = "Повторить"; action.onclick = retry;
+  }
+
+  function show(s) {
+    if (!s || installing) return;
+    var st = s.state || "none";
+    var pct = s.percent != null ? s.percent : s.pct;
+    if (st !== "error") hint.hidden = true;
+    if (st === "ready") {
+      mode("ready"); ring(1);
+      status.textContent = "Обновление скачано";
+      action.disabled = false; action.textContent = "Установить"; action.onclick = install;
+    } else if (st === "downloading" || st === "available") {
+      var p = Math.max(0, Math.min(100, Math.round(Number(pct) || 0)));
+      mode("downloading"); ring(p / 100);
+      status.innerHTML = 'Скачиваем версию 2.0 · <span class="num">' + p + "%</span>";
+      action.disabled = true; action.textContent = "Скачивается…"; action.onclick = null;
+    } else if (st === "error") {
+      if (Date.now() < ignoreErrUntil) return;
+      fail(s.error);
+    } else if (Date.now() - startedAt > 25000 && lastState !== "error") {
+      // за 25 с проверка так и не началась — даём повтор и ручную ссылку
+      fail("сервер обновлений не ответил");
+    }
+    lastState = st;
+  }
+
+  if (P.onUpdate) { try { P.onUpdate(show); } catch (e) {} }
+  function poll() {
+    try {
+      var r = P.getUpdateStatus && P.getUpdateStatus();
+      if (r && r.then) r.then(show, function () {}); else if (r) show(r);
+    } catch (e) {}
+  }
+  setInterval(poll, 1500);
+  retry();
+  setTimeout(poll, 300);
+})();
+</script>
+</body>
+</html>
