@@ -1,0 +1,85 @@
+# Диагностика доступности pazak.ru снаружи (GitHub runner + узлы check-host.net в России).
+# Живёт только в ветке claude/*, на сайт (main → GitHub Pages) не влияет.
+name: diag pazak.ru
+on:
+  push:
+    branches: ["claude/**"]
+  workflow_dispatch:
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    steps:
+      - name: DNS
+        run: |
+          for t in A AAAA CAA NS; do echo "pazak.ru $t: $(dig +short pazak.ru $t | tr '\n' ' ')"; done
+          echo "www.pazak.ru: $(dig +short www.pazak.ru | tr '\n' ' ')"
+
+      - name: TLS certificate served for pazak.ru
+        run: |
+          echo | timeout 20 openssl s_client -connect pazak.ru:443 -servername pazak.ru 2>&1 \
+            | openssl x509 -noout -subject -issuer -dates -ext subjectAltName || echo "TLS FAILED"
+
+      - name: HTTP(S) responses
+        run: |
+          for u in https://pazak.ru/ https://pazak.ru/api/ping https://pazak.ru/app/latest.yml \
+                   https://pazak.ru/app/android/latest.json https://pazak.ru/app/pazak-vpn-installer-2.0.0.exe \
+                   http://pazak.ru/ https://www.pazak.ru/ https://pazaks.github.io/pazak-update/; do
+            curl -sS -o /dev/null -m 30 -r 0-0 -w "%{http_code} verify=%{ssl_verify_result} redirect=%{redirect_url} $u\n" "$u" || echo "FAIL $u"
+          done
+          echo "--- headers https://pazak.ru/"; curl -sSI -m 20 https://pazak.ru/ || true
+          echo "--- body /api/ping"; curl -sS -m 20 https://pazak.ru/api/ping || true; echo
+
+      - name: Certificates issued (crt.sh)
+        run: |
+          curl -sS -m 60 "https://crt.sh/?q=pazak.ru&output=json" \
+            | jq -r 'sort_by(.entry_timestamp) | reverse | .[] | "\(.entry_timestamp) nb=\(.not_before) na=\(.not_after) [\(.name_value|gsub("\n";","))] \(.issuer_name)"' \
+            | head -40 || echo "crt.sh unavailable"
+
+      - name: RKN blocklists (antifilter)
+        run: |
+          for l in https://antifilter.download/list/domains.lst https://community.antifilter.download/list/domains.lst; do
+            echo "== $l"; curl -sS -m 60 "$l" | grep -i 'pazak' || echo "pazak not listed"
+          done
+          echo "== IP 185.199.108-111.153 in antifilter ip lists"
+          for l in https://antifilter.download/list/allyouneed.lst https://antifilter.download/list/ipsum.lst; do
+            curl -sS -m 60 "$l" | grep -E '^185\.199\.(10[89]|11[01])\.' | head -5 || true
+          done
+
+      - name: Reachability from Russia (check-host.net)
+        run: |
+          python3 - <<'PY'
+          import json, time, urllib.request, urllib.parse
+          H = {"Accept": "application/json", "User-Agent": "Mozilla/5.0 pazak-diag"}
+          def get(u):
+              return json.load(urllib.request.urlopen(urllib.request.Request(u, headers=H), timeout=60))
+          nodes = get("https://check-host.net/nodes/hosts")["nodes"]
+          def cc(v): return (v.get("location") or [""])[0].lower()
+          ru = [n for n, v in nodes.items() if cc(v) == "ru"]
+          other = []
+          for c in ("fi", "de", "nl"):
+              other += [n for n, v in nodes.items() if cc(v) == c][:1]
+          sel = ru + other
+          print("nodes:", ", ".join(f"{n} ({' / '.join(nodes[n].get('location', [])[1:])}, {nodes[n].get('asn','')})" for n in sel))
+          checks = [
+              ("http", "https://pazak.ru/api/ping"),
+              ("http", "https://pazaks.github.io/"),   # тот же IP GitHub Pages, другое имя (SNI)
+              ("tcp", "pazak.ru:443"),
+          ]
+          reqs = []
+          for kind, host in checks:
+              q = urllib.parse.urlencode([("host", host)] + [("node", n) for n in sel])
+              r = get(f"https://check-host.net/check-{kind}?{q}")
+              reqs.append((kind, host, r["request_id"]))
+          time.sleep(25)
+          for kind, host, rid in reqs:
+              res = {}
+              for _ in range(6):
+                  res = get(f"https://check-host.net/check-result/{rid}")
+                  if all(v is not None for v in res.values()): break
+                  time.sleep(5)
+              print(f"\n=== {kind} {host}  (https://check-host.net/check-report/{rid})")
+              for n in sel:
+                  v = res.get(n)
+                  loc = " / ".join(nodes[n].get("location", [])[1:])
+                  print(f"  {n:28} {loc:30} {json.dumps(v, ensure_ascii=False)}")
+          PY
