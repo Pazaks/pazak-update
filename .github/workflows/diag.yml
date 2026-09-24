@@ -57,52 +57,35 @@ jobs:
             curl -sS -m 60 "$l" | grep -E '^185\.199\.(10[89]|11[01])\.' | head -5 || true
           done
 
-      - name: Reachability from Russia (check-host.net)
+      - name: Pages health check (тот же гем, что у GitHub)
         continue-on-error: true
         run: |
-          python3 - <<'PY'
-          import json, time, urllib.request, urllib.parse, urllib.error
-          H = {"Accept": "application/json", "User-Agent": "Mozilla/5.0 pazak-diag"}
-          def get(u):
-              return json.load(urllib.request.urlopen(urllib.request.Request(u, headers=H), timeout=60))
-          nodes = get("https://check-host.net/nodes/hosts")["nodes"]
-          def cc(v): return (v.get("location") or [""])[0].lower()
-          ru = [n for n, v in nodes.items() if cc(v) == "ru"]
-          other = []
-          for c in ("fi", "de", "nl"):
-              other += [n for n, v in nodes.items() if cc(v) == c][:1]
-          sel = ru + other
-          print("nodes:", ", ".join(f"{n} ({' / '.join(nodes[n].get('location', [])[1:])}, {nodes[n].get('asn','')})" for n in sel))
-          checks = [
-              ("http", "https://pazak.ru/api/ping"),
-              ("http", "http://pazak.ru/api/ping"),     # без TLS: доходит ли до GitHub вообще
-              ("http", "https://pazaks.github.io/"),   # тот же IP GitHub Pages, другое имя (SNI)
-              ("tcp", "pazak.ru:443"),
-          ]
-          def get_retry(u):
-              for i in range(6):
-                  try:
-                      return get(u)
-                  except urllib.error.HTTPError as e:
-                      if e.code != 429: raise
-                      time.sleep(15 * (i + 1))
-              raise SystemExit("check-host: 429 too many requests")
-          reqs = []
-          for kind, host in checks:
-              q = urllib.parse.urlencode([("host", host)] + [("node", n) for n in sel])
-              r = get_retry(f"https://check-host.net/check-{kind}?{q}")
-              reqs.append((kind, host, r["request_id"]))
-              time.sleep(10)
-          time.sleep(20)
-          for kind, host, rid in reqs:
-              res = {}
-              for _ in range(6):
-                  res = get_retry(f"https://check-host.net/check-result/{rid}")
-                  if all(v is not None for v in res.values()): break
-                  time.sleep(5)
-              print(f"\n=== {kind} {host}  (https://check-host.net/check-report/{rid})")
-              for n in sel:
-                  v = res.get(n)
-                  loc = " / ".join(nodes[n].get("location", [])[1:])
-                  print(f"  {n:28} {loc:30} {json.dumps(v, ensure_ascii=False)}")
-          PY
+          sudo gem install --no-document github-pages-health-check >/dev/null 2>&1 || sudo gem install --no-document github-pages-health-check
+          ruby -rjson -e '
+            require "github-pages-health-check"
+            puts "gem #{GitHubPages::HealthCheck::VERSION}"
+            [:default, :authoritative, :public].each do |ns|
+              t = Time.now
+              d = begin
+                GitHubPages::HealthCheck::Domain.new("pazak.ru", nameservers: ns)
+              rescue ArgumentError
+                GitHubPages::HealthCheck::Domain.new("pazak.ru")
+              end
+              res = begin d.check!; "OK" rescue StandardError => e; "#{e.class}: #{e.message}" end
+              h = (d.to_hash rescue {})
+              puts "== nameservers=#{ns}  check!=#{res}  (#{(Time.now - t).round(2)}s)"
+              puts JSON.pretty_generate(h)
+            end'
+
+      - name: reg.ru authoritative NS, each record type (UDP/TCP, timing)
+        continue-on-error: true
+        run: |
+          for ns in ns1.reg.ru ns2.reg.ru; do
+            for t in A AAAA CNAME MX CAA TXT NS SOA; do
+              for proto in notcp tcp; do
+                s=$(date +%s.%N)
+                out=$(dig +$proto +tries=1 +time=5 @$ns pazak.ru $t 2>&1 | grep -E "status:|^pazak|timed out|connection" | tr '\n' ' ')
+                printf "%-11s %-5s %-5s %5.2fs  %s\n" "$ns" "$t" "$proto" "$(echo "$(date +%s.%N) - $s" | bc)" "$out"
+              done
+            done
+          done
