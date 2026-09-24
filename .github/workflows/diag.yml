@@ -71,7 +71,12 @@ jobs:
               rescue ArgumentError
                 GitHubPages::HealthCheck::Domain.new("pazak.ru")
               end
-              res = begin d.check!; "OK" rescue StandardError => e; "#{e.class}: #{e.message}" end
+              res = begin
+                d.check!
+                "OK"
+              rescue StandardError => e
+                "#{e.class}: #{e.message}"
+              end
               h = (d.to_hash rescue {})
               puts "== nameservers=#{ns}  check!=#{res}  (#{(Time.now - t).round(2)}s)"
               puts JSON.pretty_generate(h)
