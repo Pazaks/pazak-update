@@ -58,6 +58,12 @@ Cloudflare (только DNS, «серое облако», без проксир
 > Could you check why certificate provisioning is not queued for this domain, and whether your DNS check can
 > reach the authoritative nameservers ns1.reg.ru / ns2.reg.ru?
 
+### Контрольная проверка после чистой перепривязки (26.09 12:02 UTC, +23 мин)
+`https_certificate` всё ещё `null`, последняя сборка Pages — коммит с возвращённым CNAME (11:39 UTC), `built`.
+Гем снаружи в эту же минуту: `check! = OK`, `https_eligible? = true` во всех трёх режимах NS.
+→ Перепривязка при заведомо валидном DNS снова не запустила выпуск. Это согласуется с тем, что проверка
+ломается на стороне GitHub; следующий шаг — `gh api .../pages/health` у локального Claude (см. выше).
+
 ### Что облако сделало в main (для журнала)
 - 26.09 ~11:37 UTC `Delete CNAME` → сборка Pages OK → ~11:39 UTC `Create CNAME` (pazak.ru). Файл CNAME побайтно
   как был (перепривязка по разрешению Pazak до получения T3-cert-2). Больше в main не пушу.
